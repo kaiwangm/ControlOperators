@@ -8,7 +8,9 @@ This repository contains a simplified reference implementation for the paper "Co
 
 ## Preview
 
-<video controls width="640" src="resources/example.mp4">Your browser does not support the video tag. You can download it <a href="resources/example.mp4">here</a>.</video>
+
+https://github.com/user-attachments/assets/2dc06ffd-0b89-440c-a216-c9edbd3d90a1
+
 
 
 ### Environment setup:
@@ -22,7 +24,7 @@ pip install -r requirements.txt
 
 ### (optional) Download Pretrained Models to run the demo
 
-- [control_operators_pretrained.zip](TODO)
+- [control_operators_pretrained.zip](https://drive.google.com/file/d/1nr4B9fnDllYe01fpwx4bYc89NOO3_CIE/view?usp=sharing)
 - Extract to: `data/lafan1_resolved/`
 
 ### Demo (`controller.py`)
