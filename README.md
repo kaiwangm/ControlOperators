@@ -26,6 +26,17 @@ pip install -r requirements.txt
 
 - [control_operators_pretrained.zip](https://drive.google.com/file/d/1nr4B9fnDllYe01fpwx4bYc89NOO3_CIE/view?usp=sharing)
 - Extract to: `data/lafan1_resolved/`
+- Running the demo requires the data directory to look like this:
+```
+├── data/
+│   ├── lafan1_resolved/
+│   │   ├── X.npz
+│   │   ├── Z.npz
+│   │   ├── autoencoder.ptz
+│   │   ├── database.npz
+│   │   ├── UberControlEncoder
+│   │   │   └── controller.ptz
+```
 
 ### Demo (`controller.py`)
 
