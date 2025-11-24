@@ -14,11 +14,10 @@ https://github.com/user-attachments/assets/2dc06ffd-0b89-440c-a216-c9edbd3d90a1
 
 
 ### Environment setup:
+Note that the current environment is tested on Windows/Linux.
 ```powershell
 uv sync
 # or
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
