@@ -1,0 +1,8 @@
+.vscode
+outputs*/*
+__pycache__/*
+refs/*
+data/*
+runs/*
+wandb/*
+.venv/

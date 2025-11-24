@@ -1,0 +1,31 @@
+[project]
+name = "control-operators"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.11.0"
+dependencies = [
+    "cffi>=2.0.0",
+    "clip",
+    "numpy>=2.3.4",
+    "pandas>=2.3.3",
+    "raylib>=5.5.0.3",
+    "scipy>=1.16.2",
+    "tensorboard>=2.20.0",
+    "tqdm>=4.67.1",
+    "torch",
+    "torchvision"
+]
+
+[tool.uv.sources]
+clip = { git = "https://github.com/openai/CLIP.git" }
+torch = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchvision = [
+  { index = "pytorch-cu128", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
