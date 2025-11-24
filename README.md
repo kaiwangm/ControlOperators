@@ -2,7 +2,7 @@
 
 This repository contains a simplified reference implementation for the paper "Control Operators for Interactive Character Animation". Note that it is not the exact implementation as in the paper or paper videos, as the original implementation was developed integrated within Unreal Engine. Here we provide an example of implementing some core ideas in Python:
 
-- implementation and example usage of [control operators](https://theorangeduck.com/page/implementing-control-operators)
+- implementation and example usage of [control operators](TODO)
 - training and interactive testing of a flow-matching-based autoregressive character controller on [lafan1-resolved](https://github.com/orangeduck/lafan1-resolved) dataset
 
 
