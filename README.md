@@ -1,4 +1,6 @@
-# Simplified Reference Implementation
+# Control Operators for Interactive Character Animation
+
+<img width="2901" height="650" alt="Teaser_v3" src="https://github.com/user-attachments/assets/73b1d64b-92b8-4504-a71c-21fc33b737aa" />
 
 This repository contains a simplified reference implementation for our Siggraph Asia 2025 paper ["Control Operators for Interactive Character Animation"](https://theorangeduck.com/page/control-operators-interactive-character-animation). Note that it is not the exact implementation as in the paper or paper videos, as the original implementation was developed integrated within Unreal Engine. Here we provide an example of implementing some core ideas in Python:
 
