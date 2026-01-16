@@ -13,6 +13,8 @@ class Vector(ControlOperator):
     def __init__(self, size : int) -> None:
         super().__init__()
         self.size = size
+        # Register a dummy buffer to track device
+        self.register_buffer('_device_tracker', torch.zeros(1))
     
     def output_size(self) -> int:
         return self.size
@@ -20,6 +22,9 @@ class Vector(ControlOperator):
     def forward(self, x : List[torch.FloatTensor]) -> torch.FloatTensor:
         assert all(len(xb.shape) == 1 for xb in x)
         assert all(xb.shape[0] == self.output_size() for xb in x)
+        device = self._device_tracker.device
+        # Move all input tensors to the correct device
+        x = [xb.to(device) for xb in x]
         return torch.stack(x, dim=0)
         
         
@@ -49,12 +54,20 @@ def quat_to_xform_xy(q):
 
 class Rotation(ControlOperator):
     
+    def __init__(self) -> None:
+        super().__init__()
+        # Register a dummy buffer to track device
+        self.register_buffer('_device_tracker', torch.zeros(1))
+    
     def output_size(self) -> int:
         return 6
         
     def forward(self, x : List[torch.FloatTensor]) -> torch.FloatTensor:
         assert all(len(xb.shape) == 1 for xb in x)
         assert all(xb.shape[0] == 4 for xb in x)
+        device = self._device_tracker.device
+        # Move all input tensors to the correct device
+        x = [xb.to(device) for xb in x]
         return quat_to_xform_xy(torch.stack(x, dim=0)).reshape([len(x), 6])
 
 # And / Struct
@@ -89,18 +102,26 @@ class Or(ControlOperator):
         
     def output_size(self) -> int:
         return self.encoding_size + len(self.ops)
+    
+    def _get_device(self):
+        """Get the device of this module's parameters"""
+        for p in self.parameters():
+            return p.device
+        return torch.device('cpu')
         
     def forward(self, x : List[Tuple[str,Any]]) -> torch.FloatTensor:
         assert(all(xb[0] in self.ops for xb in x))
         
-        # Create zero output
-        out = torch.zeros([len(x), self.output_size()], dtype=torch.float32)
+        device = self._get_device()
+        
+        # Create zero output on the correct device
+        out = torch.zeros([len(x), self.output_size()], dtype=torch.float32, device=device)
         
         # Loop over sub-operators
         for ki, (k, v) in enumerate(self.ops.items()):
             
             # Find batch indices for this sub operator
-            indices = torch.as_tensor([xi for xi, xb in enumerate(x) if xb[0] == k])
+            indices = torch.as_tensor([xi for xi, xb in enumerate(x) if xb[0] == k], device=device)
             
             if len(indices) > 0:
                 # Insert encoded
@@ -129,15 +150,23 @@ class Set(ControlOperator):
 
     def output_size(self) -> int:
         return self.head_num * self.encoding_size
+    
+    def _get_device(self):
+        """Get the device of this module's parameters"""
+        for p in self.parameters():
+            return p.device
+        return torch.device('cpu')
         
     def forward(self, x : List[List[Any]]) -> torch.FloatTensor:
+        
+        device = self._get_device()
         
         encoded = self.op(sum(x, []))        
         queries = self.Q(encoded).reshape([len(encoded), self.head_num, self.query_size])
         keys = self.K(encoded).reshape([len(encoded), self.head_num, self.query_size])
         values = self.V(encoded).reshape([len(encoded), self.head_num, self.encoding_size])
         
-        output = torch.zeros([len(x), self.head_num, self.encoding_size], dtype=torch.float32)
+        output = torch.zeros([len(x), self.head_num, self.encoding_size], dtype=torch.float32, device=device)
         
         offset = 0
         for xi, xb in enumerate(x):
@@ -167,11 +196,16 @@ class FixedArray(ControlOperator):
 
 class Null(ControlOperator):
     
+    def __init__(self, device=None) -> None:
+        super().__init__()
+        # Register a dummy parameter to track device
+        self.register_buffer('_device_tracker', torch.zeros(1))
+    
     def output_size(self) -> int:
         return 0
         
     def forward(self, x : List[None]) -> torch.FloatTensor:
-        return torch.empty([len(x), 0], dtype=torch.float32)
+        return torch.empty([len(x), 0], dtype=torch.float32, device=self._device_tracker.device)
 
 # Index
 
@@ -180,12 +214,15 @@ class Index(ControlOperator):
     def __init__(self, max_index : int = 128) -> None:
         super().__init__()
         self.max_index = max_index
+        # Register a dummy buffer to track device
+        self.register_buffer('_device_tracker', torch.zeros(1))
         
     def output_size(self) -> int:
         return 1
 
     def forward(self, x : List[int]) -> torch.FloatTensor:
-        return torch.as_tensor(x, dtype=torch.float32)[...,None] / self.max_index
+        device = self._device_tracker.device
+        return torch.as_tensor(x, dtype=torch.float32, device=device)[...,None] / self.max_index
     
 # One Of
 
@@ -194,13 +231,16 @@ class OneOf(ControlOperator):
     def __init__(self, choices : List[str]) -> None:
         super().__init__()
         self.choices = choices
+        # Register a dummy buffer to track device
+        self.register_buffer('_device_tracker', torch.zeros(1))
         
     def output_size(self) -> int:
         return len(self.choices)
         
     def forward(self, x : List[str]) -> torch.FloatTensor:
+        device = self._device_tracker.device
         return torch.nn.functional.one_hot(
-            torch.as_tensor([self.choices.index(xb) for xb in x]), len(self.choices))
+            torch.as_tensor([self.choices.index(xb) for xb in x], device=device), len(self.choices)).float()
     
 class Enum(OneOf): pass
 
@@ -211,12 +251,15 @@ class SomeOf(ControlOperator):
     def __init__(self, choices : List[str]) -> None:
         super().__init__()
         self.choices = choices
+        # Register a dummy buffer to track device
+        self.register_buffer('_device_tracker', torch.zeros(1))
         
     def output_size(self) -> int:
         return len(self.choices)
         
     def forward(self, x : List[List[str]]) -> torch.FloatTensor:
-        out = torch.zeros([len(x), len(self.choices)])
+        device = self._device_tracker.device
+        out = torch.zeros([len(x), len(self.choices)], device=device)
         for xi, xb in enumerate(x):
             for c in xb:
                 out[xi,self.choices.index(c)] = 1.0

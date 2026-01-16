@@ -909,26 +909,34 @@ def main():
     
     use_fm = False
     
+    # Setup CUDA device
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        print(f"CUDA available: {torch.cuda.get_device_name(0)}")
+    else:
+        device = torch.device('cpu')
+        print("CUDA not available, using CPU")
+    
     if not all(p.exists() for p in [autoencoder_path, controller_path, database_path, xnpz_path, znpz_path]):
         print("Missing controller files, running in BIND POSE mode")
         use_fm = False
     else:
         try:
-            # Load data
+            # Load data to GPU
             xdata = np.load(xnpz_path, allow_pickle=True)
-            Xoffset = torch.as_tensor(xdata['Xoffset'], device='cpu', dtype=torch.float32)
-            Xscale = torch.as_tensor(xdata['Xscale'], device='cpu', dtype=torch.float32)
-            Xdist = torch.as_tensor(xdata['Xdist'], device='cpu', dtype=torch.float32)
+            Xoffset = torch.as_tensor(xdata['Xoffset'], device=device, dtype=torch.float32)
+            Xscale = torch.as_tensor(xdata['Xscale'], device=device, dtype=torch.float32)
+            Xdist = torch.as_tensor(xdata['Xdist'], device=device, dtype=torch.float32)
             Xref_pos = xdata['Xref_pos']
             X_dim = len(Xoffset)
             
             zdata = np.load(znpz_path, allow_pickle=True)
             Z = zdata['Z']
-            Zoffset = torch.as_tensor(zdata['Zoffset'], device='cpu', dtype=torch.float32)
-            Zscale = torch.as_tensor(zdata['Zscale'], device='cpu', dtype=torch.float32)
-            Zdist = torch.as_tensor(zdata['Zdist'], device='cpu', dtype=torch.float32)
-            Zmin = torch.as_tensor(zdata['Zmin'], device='cpu', dtype=torch.float32)
-            Zmax = torch.as_tensor(zdata['Zmax'], device='cpu', dtype=torch.float32)
+            Zoffset = torch.as_tensor(zdata['Zoffset'], device=device, dtype=torch.float32)
+            Zscale = torch.as_tensor(zdata['Zscale'], device=device, dtype=torch.float32)
+            Zdist = torch.as_tensor(zdata['Zdist'], device=device, dtype=torch.float32)
+            Zmin = torch.as_tensor(zdata['Zmin'], device=device, dtype=torch.float32)
+            Zmax = torch.as_tensor(zdata['Zmax'], device=device, dtype=torch.float32)
             Z_dim = Z.shape[1]
             
             database_data = np.load(database_path, allow_pickle=True)
@@ -936,22 +944,25 @@ def main():
             database_parents = database_data['parents']
             database_names = database_data['names']
             
-            encoder_network = networks.MLP(inp=X_dim, out=256, hidden=512, depth=2)
-            decoder_network = networks.MLP(inp=256, out=X_dim, hidden=512, depth=2)
+            # Create networks and move to GPU
+            encoder_network = networks.MLP(inp=X_dim, out=256, hidden=512, depth=2).to(device)
+            decoder_network = networks.MLP(inp=256, out=X_dim, hidden=512, depth=2).to(device)
 
             control_encoder: ControlEncoderBase = UberControlEncoder()
+            control_encoder.to(device)
             # control_encoder: ControlEncoderBase = NullControlEncoder()
 
             # build flow model 
-            denoiser_network = networks.SkipCatMLP(inp=(Z.shape[1]*2 + control_encoder.output_size() + 1), out=Z.shape[1], hidden=1024, depth=10)
+            denoiser_network = networks.SkipCatMLP(inp=(Z.shape[1]*2 + control_encoder.output_size() + 1), out=Z.shape[1], hidden=1024, depth=10).to(device)
             
-            autoencoder_data = torch.load(autoencoder_path, weights_only=True)
+            autoencoder_data = torch.load(autoencoder_path, weights_only=True, map_location=device)
             encoder_network.load_state_dict(autoencoder_data['encoder'])
             decoder_network.load_state_dict(autoencoder_data['decoder'])
             
             # Load Null controller and denoiser
-            controller_data = torch.load(controller_path, weights_only=True)
-            control_encoder.root.load_state_dict(controller_data['control_encoder'])
+            # Use strict=False to ignore missing _device_tracker buffers from older checkpoints
+            controller_data = torch.load(controller_path, weights_only=True, map_location=device)
+            control_encoder.root.load_state_dict(controller_data['control_encoder'], strict=False)
             denoiser_network.load_state_dict(controller_data['denoiser'])
             print(f"Loaded controller from {controller_path}")
             
@@ -964,29 +975,32 @@ def main():
 
             def reset_animation():
                 start_frame = np.random.randint(0, len(Z))
-                Zprev_new = torch.as_tensor(Z[start_frame][None], device='cpu', dtype=torch.float32)
+                Zprev_new = torch.as_tensor(Z[start_frame][None], device=device, dtype=torch.float32)
                 print(f"Reset animation - new start frame: {start_frame}")
                 return Zprev_new, start_frame
 
-            # TODO: refactor these same with train.py inference
+            # GPU-accelerated inference
             @torch.no_grad()
-            @torch.jit.script
-            def inference_cpu(Zprev, Zdist, Zmin, Zmax, Cnext, S : int = 4):
-                Znext = Zdist * torch.randn_like(Zprev, device='cpu')
+            def inference_gpu(Zprev, Zdist, Zmin, Zmax, Cnext, S: int = 4):
+                Znext = Zdist * torch.randn_like(Zprev)
                 for s in range(S):
-                    t = torch.full([Zprev.shape[0], 1], s / S, device='cpu', dtype=torch.float32)
+                    t = torch.full([Zprev.shape[0], 1], s / S, device=device, dtype=torch.float32)
                     denoiser_input = torch.cat([Znext, Zprev, Cnext, t], dim=1)
                     Znext = Znext + (1 / S) * Zdist * denoiser_network(denoiser_input)
                 return Znext.clip(Zmin, Zmax)
             
+            # Cache CPU tensors for decode_pose to avoid repeated GPU->CPU transfers
+            Xscale_cpu = Xscale.cpu().numpy()
+            Xoffset_cpu = Xoffset.cpu().numpy()
+            
             @torch.no_grad()
             def decode_pose(Zinput, Xroot_pos, Xroot_rot, dt):
                 
-                # Decode to normalized pose vector
+                # Decode to normalized pose vector (GPU computation, then transfer to CPU)
                 Xpose = (Xdist * decoder_network(Zinput * Zscale + Zoffset)).cpu().numpy()[0]
                 
-                # Denormalize pose vector
-                Xpose = Xpose * Xscale.numpy() + Xoffset.numpy()
+                # Denormalize pose vector (CPU computation)
+                Xpose = Xpose * Xscale_cpu + Xoffset_cpu
                 
                 # Unpack pose
                 Xrvel = Xpose[0:3]
@@ -1018,7 +1032,7 @@ def main():
             
             use_fm = True
             print("Controller initialized")
-            print(f"  - Device: CPU")
+            print(f"  - Device: {device} ({torch.cuda.get_device_name(0) if device.type == 'cuda' else 'CPU'})")
             print(f"  - Bones: {nbones}")
             print(f"  - Latent dim: {Z_dim}")
             print(f"  - Pose dim: {X_dim}")
@@ -1045,7 +1059,19 @@ def main():
     # Initialize root motion and simulation state
     Xroot_pos = np.zeros(3, dtype=np.float32)
     Xroot_rot = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-    localPositions, localRotations, localVelocities, localAngularVelocities, _, _ = decode_pose(Zprev, Xroot_pos, Xroot_rot, dt)
+    
+    if use_fm:
+        # Neural network mode - decode initial pose from latent
+        localPositions, localRotations, localVelocities, localAngularVelocities, _, _ = decode_pose(Zprev, Xroot_pos, Xroot_rot, dt)
+    else:
+        # Bind pose mode - use frame 0 of BVH data (already loaded above)
+        # Extract frame 0 to match neural network output shape [nbones, ...]
+        localPositions = localPositions[0]
+        localRotations = localRotations[0]
+        globalPositions = globalPositions[0]
+        globalRotations = globalRotations[0]
+        localVelocities = np.zeros_like(localPositions)
+        localAngularVelocities = np.zeros_like(localPositions)
 
     # Initialize input
     gameplay_input = GameplayInput(
@@ -1100,8 +1126,8 @@ def main():
                 # Compute encoded control vector
                 Cnext = control_encoder([Vnext])
 
-                # Run inference to update Zprev
-                Zprev = inference_cpu(Zprev, Zdist, Zmin, Zmax, Cnext, S=4)
+                # Run inference to update Zprev (GPU accelerated)
+                Zprev = inference_gpu(Zprev, Zdist, Zmin, Zmax, Cnext, S=4)
                 
                 # Decode new pose and apply pose smoothing
                 prevLocalPositions, prevLocalRotations = localPositions, localRotations
